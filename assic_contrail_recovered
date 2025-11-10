@@ -1,0 +1,168 @@
+# Step 1 & 2: Define Manufactured Solution and Known Variables
+# We invent an exact solution for R(x,t) and use the previous exact
+# solution for I(x,t) as a known input.
+
+def R_exact(x, t, gamma):
+    """Manufactured solution for R(x, t)."""
+    return np.cos(np.pi * x) * (1 - np.exp(-gamma * t)) + 0.5
+
+def I_exact(x, t):
+    """
+    Known function for I(x, t) from the previous problem.
+    This is treated as a given input for the R equation.
+    """
+    return np.sin(2 * np.pi * x) * np.exp(-0.5 * t) + 1.5
+
+# Step 3: Derive Initial and Boundary Conditions for R(x,t)
+# These are derived by evaluating the exact solution at t=0 and the boundaries.
+
+def R_initial(x, gamma):
+    """Initial condition derived from R_exact at t=0."""
+    return R_exact(x, 0, gamma)
+
+def R_boundary_left(t, gamma):
+    """Boundary condition at x=0 derived from R_exact."""
+    return R_exact(0, t, gamma)
+
+def R_boundary_right(t, gamma):
+    """Boundary condition at x=1 derived from R_exact."""
+    return R_exact(1, t, gamma)
+
+# Step 4: Calculate the Forcing Term H(x, t)
+# This term is calculated to make our manufactured solution a perfect
+# solution to the modified PDE for R.
+
+def H(x, t, u, gamma):
+    """
+    Forcing term H(x,t) for the R-equation.
+    H = (dR/dt + u*dR/dx) - (gamma*I)
+    """
+    # Exact derivatives of R_exact(x, t)
+    dR_dt = np.cos(np.pi * x) * (gamma * np.exp(-gamma * t))
+    dR_dx = -np.pi * np.sin(np.pi * x) * (1 - np.exp(-gamma * t))
+
+    # Value of the exact solution for I at the given x and t
+    i_val = I_exact(x, t)
+
+    # The full forcing term
+    force_term = (dR_dt + u * dR_dx) - (gamma * i_val)
+    return force_term
+
+# Numerical Solver using FTCS for the R-equation
+# This function solves the modified PDE and returns the final numerical result.
+
+def solve_r_with_ftcs(dx, cfl, L, t_f, u, gamma):
+    """
+    Solves the PDE for R(x,t) using the FTCS scheme.
+
+    Args:
+        dx (float): Spatial step size.
+        cfl (float): The Courant number (for stability).
+        All other args are simulation parameters.
+
+    Returns:
+        R_numerical (array): The final numerical solution for R.
+        x (array): The spatial grid.
+        dt (float): The time step used.
+    """
+    # Ensure dt is small enough for stability based on the CFL condition
+    dt = cfl * dx / np.abs(u)
+
+    # Setup grid
+    nx = int(L / dx) + 1
+    x = np.linspace(0, L, nx)
+    nt = int(t_f / dt)
+
+    # Initialize solution array with the initial condition
+    R = R_initial(x, gamma)
+
+    # Time-stepping loop
+    for n in range(nt):
+        t_current = n * dt
+        R_n = R.copy()  # Copy of the solution at time 'n'
+
+        # Loop over INTERIOR points
+        for i in range(1, nx - 1):
+            # Evaluate I_exact and H at the current point and time
+            I_val = I_exact(x[i], t_current)
+            H_val = H(x[i], t_current, u, gamma)
+
+            # This is the FTCS formula for the R-equation
+            R[i] = R_n[i] \
+                   - u * dt / (2 * dx) * (R_n[i+1] - R_n[i-1]) \
+                   + dt * (gamma * I_val + H_val)
+
+        # Apply boundary conditions for the next time step
+        t_next = (n + 1) * dt
+        R[0] = R_boundary_left(t_next, gamma)
+        R[-1] = R_boundary_right(t_next, gamma)
+
+    return R, x, dt
+
+
+# Main execution: Convergence Check
+
+# Simulation Parameters
+L = 1.0       # Domain length
+t_f = 1.0     # Final time
+u = 1.0       # Advection speed
+gamma = 0.1   # Recovery coefficient
+CFL = 0.1     # Courant number (must be <= 1 for FTCS advection)
+
+# Spatial step sizes to test
+dx_values = [0.1, 0.05, 0.02, 0.01, 0.005]
+errors = []
+
+print("--- Convergence Check for R(x,t) ---")
+print(f"{'dx':<10} | {'dt':<12} | {'Error (L2 Norm)':<20}")
+print("-" * 48)
+
+# Use the last dx for plotting later
+x_final = None
+R_numerical_final = None
+
+for dx in dx_values:
+    # Solve the PDE numerically
+    R_numerical, x, dt = solve_r_with_ftcs(dx, CFL, L, t_f, u, gamma)
+
+    # Store the final results for the highest resolution case
+    if dx == dx_values[-1]:
+        x_final = x
+        R_numerical_final = R_numerical
+
+    # Calculate the exact solution at the final time on the same grid
+    R_analytical_final = R_exact(x, t_f, gamma)
+
+    # Calculate the L2 norm of the error
+    error = np.sqrt(np.sum((R_numerical - R_analytical_final)**2) * dx)
+    errors.append(error)
+
+    print(f"{dx:<10.4f} | {dt:<12.6f} | {error:<20.8f}")
+
+# Plotting Results
+# 1. Plot the final solution for the highest resolution case
+plt.figure(figsize=(10, 6))
+plt.title(f"Numerical vs. Exact Solution for R(x,t) at t={t_f} (dx={dx_values[-1]})")
+plt.plot(x_final, R_exact(x_final, t_f, gamma), 'k-', label='Exact Solution', linewidth=2)
+plt.plot(x_final, R_numerical_final, 'b--o', label='Numerical Solution (FTCS)', markersize=4)
+plt.xlabel("Position (x)")
+plt.ylabel("R(x,t)")
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# 2. Plot the error convergence on a log-log scale
+plt.figure(figsize=(10, 6))
+plt.title("Convergence Plot for R(x,t) (Error vs. dx)")
+plt.loglog(dx_values, errors, 'bo-', label='L2 Error')
+
+# Fit a line to determine the order of convergence
+order_fit = np.polyfit(np.log(dx_values), np.log(errors), 1)
+plt.loglog(dx_values, np.exp(order_fit[1]) * np.array(dx_values)**order_fit[0], 'r--', label=f'Fit (Order = {order_fit[0]:.2f})')
+
+plt.xlabel("Spatial Step Size (dx)")
+plt.ylabel("L2 Error Norm")
+plt.legend()
+plt.grid(True)
+plt.gca().invert_xaxis() # Convention for convergence plots
+plt.show()
