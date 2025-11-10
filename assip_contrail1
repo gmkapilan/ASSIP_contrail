@@ -1,0 +1,157 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Step 1 & 2: Define the Manufactured Solution and Other Variables
+# We invent an exact solution S(x,t) and define the other variable I(x,t).
+# These are the "true" answers we will try to get our numerical code to match.
+
+def S_exact(x, t):
+    """Manufactured solution for S(x, t)."""
+    return np.cos(np.pi * x) * np.exp(-t) + 2
+
+def I_exact(x, t):
+    """Manufactured definition for the variable I(x, t)."""
+    return np.sin(np.pi * x) + 1
+
+# Step 3: Derive Initial and Boundary Conditions
+# These are derived by evaluating the exact solution at t=0 and the boundaries.
+
+def S_initial(x):
+    """Initial condition derived from S_exact at t=0."""
+    return S_exact(x, 0)
+
+def S_boundary_left(t):
+    """Boundary condition at x=0 derived from S_exact."""
+    return S_exact(0, t)
+
+def S_boundary_right(t):
+    """Boundary condition at x=1 derived from S_exact."""
+    return S_exact(1, t)
+
+# Step 4: Calculate the Forcing Term F(x, t)
+# This term is calculated to make our manufactured solution a perfect
+# solution to the modified PDE.
+
+def F(x, t, u, beta):
+    """
+    Forcing term F(x,t) calculated by plugging S_exact and I_exact
+    into the original PDE.
+    F = dS/dt + u*dS/dx + beta*S*I
+    """
+    # Derivatives of S_exact
+    dS_dt = -np.cos(np.pi * x) * np.exp(-t)
+    dS_dx = -np.pi * np.sin(np.pi * x) * np.exp(-t)
+
+    # The full forcing term
+    force_term = dS_dt + u * dS_dx + beta * S_exact(x, t) * I_exact(x, t)
+    return force_term
+
+# Numerical Solver using FTCS
+# This function solves the modified PDE and returns the final numerical result.
+
+def solve_with_ftcs(dx, cfl, L, t_f, u, beta):
+    """
+    Solves the PDE using the FTCS scheme.
+
+    Args:
+        dx (float): Spatial step size.
+        cfl (float): The Courant number (for stability).
+
+    Returns:
+        S_numerical (array): The final numerical solution.
+        x (array): The spatial grid.
+        dt (float): The time step used.
+    """
+    # Ensure dt is small enough for stability based on the CFL condition
+    dt = cfl * dx / np.abs(u)
+
+    # Setup grid
+    nx = int(L / dx) + 1
+    x = np.linspace(0, L, nx)
+    nt = int(t_f / dt)
+
+    # Initialize solution array with the initial condition
+    S = S_initial(x)
+
+    # Time-stepping loop
+    for n in range(nt):
+        t_current = n * dt
+        S_n = S.copy()  # Copy of the solution at time 'n'
+
+        # Loop over INTERIOR points
+        for i in range(1, nx - 1):
+            # Evaluate I and F at the current point and time
+            I_val = I_exact(x[i], t_current)
+            F_val = F(x[i], t_current, u, beta)
+
+            # This is the FTCS formula we derived
+            S[i] = S_n[i] \
+                   - u * dt / (2 * dx) * (S_n[i+1] - S_n[i-1]) \
+                   + dt * (-beta * S_n[i] * I_val + F_val)
+
+        # Apply boundary conditions for the next time step
+        t_next = (n + 1) * dt
+        S[0] = S_boundary_left(t_next)
+        S[-1] = S_boundary_right(t_next)
+
+    return S, x, dt
+
+
+# Main execution: Convergence Check
+
+# Simulation Parameters
+L = 1.0       # Domain length
+t_f = 1.0     # Final time
+u = 1.0       # Advection speed
+beta = 0.5    # Reaction coefficient
+CFL = 2     # Courant number (must be <= 1 for FTCS advection)
+
+# Spatial step sizes to test
+dx_values = [0.1, 0.05, 0.02, 0.01, 0.005]
+errors = []
+
+print("--- Convergence Check ---")
+print(f"{'dx':<10} | {'dt':<12} | {'Error (L2 Norm)':<20}")
+print("-" * 48)
+
+for dx in dx_values:
+    # Solve the PDE numerically
+    S_numerical, x, dt = solve_with_ftcs(dx, CFL, L, t_f, u, beta)
+
+    # Calculate the exact solution at the final time on the same grid
+    S_analytical_final = S_exact(x, t_f)
+
+    # Calculate the L2 norm of the error
+    error = np.sqrt(np.sum((S_numerical - S_analytical_final)**2) * dx)
+    errors.append(error)
+
+    print(f"{dx:<10.4f} | {dt:<12.6f} | {error:<20.8f}")
+
+# Plotting Results
+
+# 1. Plot the final solution for the highest resolution case
+plt.figure(figsize=(10, 6))
+plt.title(f"Numerical vs. Exact Solution at t={t_f} (dx={dx_values[-1]})")
+plt.plot(x, S_analytical_final, 'k-', label='Exact Solution', linewidth=2)
+plt.plot(x, S_numerical, 'r--o', label='Numerical Solution (FTCS)', markersize=4)
+plt.xlabel("Position (x)")
+plt.ylabel("S(x,t)")
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# 2. Plot the error convergence on a log-log scale
+plt.figure(figsize=(10, 6))
+plt.title("Convergence Plot (Error vs. dx)")
+plt.loglog(dx_values, errors, 'bo-', label='L2 Error')
+# Fit a line to determine the order of convergence
+order_fit = np.polyfit(np.log(dx_values), np.log(errors), 1)
+plt.loglog(dx_values, np.exp(order_fit[1]) * np.array(dx_values)**order_fit[0], 'r--', label=f'Fit (Order = {order_fit[0]:.2f})')
+plt.xlabel("Spatial Step Size (dx)")
+plt.ylabel("L2 Error Norm")
+plt.legend()
+plt.grid(True)
+plt.gca().invert_xaxis() # Convention for convergence plots
+plt.show()
+
+
